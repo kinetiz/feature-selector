@@ -225,9 +225,31 @@ class FeatureSelector():
         self.ops['collinear'] = to_drop
         
         print('%d features with a correlation magnitude greater than %0.2f.\n' % (len(self.ops['collinear']), self.correlation_threshold))
+    
+    def sortImportance(self, left, right):
+        """Return high, low importance"""
+        left_score = self.feature_importances[self.feature_importances.feature == left].normalized_importance.values[0]
+        right_score = self.feature_importances[self.feature_importances.feature == right].normalized_importance.values[0]
+        if left_score >= right_score:
+            return left, right #, left_score
+        else:
+            return right, left #, right_score
 
+    def rearrange_collinear_by_importance(self):
+        """create new collinear table "record_collinear_by_importance" based on importance. """
+        self.record_collinear_by_importance = self.record_collinear.copy()
+        rearrangeLst = []
+        for i, r in self.record_collinear_by_importance.iterrows():
+            high, low = self.sortImportance(r['corr_feature'], r['drop_feature'])
+            if high != r['corr_feature']:
+                self.record_collinear_by_importance.loc[i, 'corr_feature'] = high
+                self.record_collinear_by_importance.loc[i, 'drop_feature'] = low
+                rearrangeLst.append(i)
+        print("Following record_colliner indexes are rearranged: ")
+        print(rearrangeLst)
+            
     def identify_zero_importance(self, task, eval_metric=None, 
-                                 n_iterations=10, early_stopping = True):
+                                 n_iterations=1, early_stopping = True):
         """
         
         Identify the features with zero importance according to a gradient boosting machine.
@@ -292,9 +314,29 @@ class FeatureSelector():
         for _ in range(n_iterations):
 
             if task == 'classification':
+#                 params = {
+#                           "objective" : "multiclass",
+#                           "num_class" : 4,
+#                           "learning_rate" : 0.05,
+#                           "n_estimators" : 1000,
+#                           "verbosity" : -1 }
+
                 model = lgb.LGBMClassifier(n_estimators=1000, learning_rate = 0.05, verbose = -1)
 
+            elif task == 'multi_classification':
+#                     params = {
+#                           "objective" : "binary",
+#                           "learning_rate" : 0.05,
+#                           "n_estimators" : 1000,
+#                           "verbosity" : -1 }
+                model = lgb.LGBMClassifier(n_estimators=1000, learning_rate = 0.05, verbose = -1, objective = 'multiclass')
+
             elif task == 'regression':
+#                     params = {
+#                                       "objective" : "regression",
+#                                       "learning_rate" : 0.05,
+#                                       "n_estimators" : 1000,
+#                                       "verbosity" : -1 }
                 model = lgb.LGBMRegressor(n_estimators=1000, learning_rate = 0.05, verbose = -1)
 
             else:
@@ -310,13 +352,21 @@ class FeatureSelector():
                           eval_set = [(valid_features, valid_labels)],
                           early_stopping_rounds = 100, verbose = -1)
                 
+#                 lgtrain, lgval = lgb.Dataset(train_features, train_labels), lgb.Dataset(valid_features, valid_labels)
+#                 model = lgb.train(params, lgtrain, 2000, valid_sets=[lgtrain, lgval], early_stopping_rounds=100, verbose_eval=-1)
+
                 # Clean up memory
                 gc.enable()
                 del train_features, train_labels, valid_features, valid_labels
                 gc.collect()
                 
-            else:
+            else:                
+#                 lgtrain = lgb.Dataset(train_features, train_labels)
+#                 model = lgb.train(params, lgtrain, verbose_eval=-1)
                 model.fit(features, labels)
+            
+            
+
 
             # Record the feature importances
             feature_importance_values += model.feature_importances_ / n_iterations
@@ -400,7 +450,7 @@ class FeatureSelector():
         self.identify_missing(selection_params['missing_threshold'])
         self.identify_single_unique()
         self.identify_collinear(selection_params['correlation_threshold'])
-        self.identify_zero_importance(task = selection_params['task'], eval_metric = selection_params['eval_metric'])
+        self.identify_zero_importance(task = selection_params['task'], eval_metric = selection_params['eval_metric'], n_iterations = selection_params['n_iterations'])
         self.identify_low_importance(selection_params['cumulative_importance'])
         
         # Find the number of features identified to drop
